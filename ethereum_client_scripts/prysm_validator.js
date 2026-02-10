@@ -18,6 +18,7 @@ if (argv.directory) {
 const feeRecipient = argv["fee-recipient"] || null;
 const graffiti = argv.graffiti || "BuidlGuidl";
 const mevBoostEnabled = argv["mev-boost"] || false;
+const passwordDir = argv["password-dir"] || null;
 
 let prysmCommand;
 const platform = os.platform();
@@ -44,12 +45,11 @@ const validatorDataDir = path.join(
   "prysm"
 );
 
-const passwordPath = path.join(
-  installDir,
-  "ethereum_clients",
-  "validator",
-  "password.txt"
-);
+// When --password-dir is provided (RAM-backed tmpfs), use that directory
+// for the password file so it never touches physical disk.
+const passwordPath = passwordDir
+  ? path.join(passwordDir, "password.txt")
+  : path.join(installDir, "ethereum_clients", "validator", "password.txt");
 
 const logsDir = path.join(validatorDataDir, "logs");
 

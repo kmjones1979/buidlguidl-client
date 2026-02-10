@@ -18,6 +18,7 @@ if (argv.directory) {
 const feeRecipient = argv["fee-recipient"] || null;
 const graffiti = argv.graffiti || "BuidlGuidl";
 const mevBoostEnabled = argv["mev-boost"] || false;
+const passwordDir = argv["password-dir"] || null;
 
 let lighthouseCommand;
 const platform = os.platform();
@@ -51,26 +52,23 @@ const keystoresDir = path.join(
   "keystores"
 );
 
-const secretsDir = path.join(
-  installDir,
-  "ethereum_clients",
-  "validator",
-  "secrets"
-);
+// Determine the password file and secrets directory.
+// When --password-dir is provided (RAM-backed tmpfs), use that directory
+// for both the password file and per-validator secrets so they never touch disk.
+const passwordFile = passwordDir
+  ? path.join(passwordDir, "password.txt")
+  : path.join(installDir, "ethereum_clients", "validator", "password.txt");
 
-const passwordFile = path.join(
-  installDir,
-  "ethereum_clients",
-  "validator",
-  "password.txt"
-);
+const secretsDir = passwordDir
+  ? path.join(passwordDir, "secrets")
+  : path.join(installDir, "ethereum_clients", "validator", "secrets");
 
 // Lighthouse expects --secrets-dir to contain one file per validator,
 // named after the validator's public key, each containing the keystore password.
 // Populate the secrets dir from the master password file and keystore filenames.
 if (fs.existsSync(passwordFile) && fs.existsSync(keystoresDir)) {
   if (!fs.existsSync(secretsDir)) {
-    fs.mkdirSync(secretsDir, { recursive: true });
+    fs.mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
   }
   const password = fs.readFileSync(passwordFile, "utf8");
   const keystoreFiles = fs.readdirSync(keystoresDir).filter(

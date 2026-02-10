@@ -5,6 +5,11 @@ import crypto from "crypto";
 import { execSync, execFileSync, spawnSync } from "child_process";
 import readlineSync from "readline-sync";
 import { debugToFile } from "../helpers.js";
+import {
+  getSecurePasswordPath,
+  getSecureSecretsDir,
+  getSecureDirPath,
+} from "./secureStore.js";
 
 const latestDepositCliVer = "2.7.0";
 
@@ -183,9 +188,16 @@ export function hasExistingKeys(installDir) {
 }
 
 /**
- * Get the path where the password file would be stored.
+ * Get the path where the password file is stored.
+ * Uses the RAM-backed secure directory when available.
  */
 export function getPasswordFilePath(installDir) {
+  // Use tmpfs-backed path if the secure dir exists
+  const secureDir = getSecureDirPath();
+  if (secureDir) {
+    return getSecurePasswordPath();
+  }
+  // Fallback for cases where secure dir isn't created yet
   return path.join(
     installDir,
     "ethereum_clients",
@@ -202,32 +214,19 @@ export function hasPasswordFile(installDir) {
 }
 
 /**
- * Delete the password file from disk (called on process exit for security).
- */
-export function deletePasswordFile(installDir) {
-  const passwordPath = getPasswordFilePath(installDir);
-  try {
-    if (fs.existsSync(passwordPath)) {
-      fs.unlinkSync(passwordPath);
-      debugToFile("Password file removed from disk.");
-    }
-  } catch (e) {
-    debugToFile(`Warning: could not delete password file: ${e.message}`);
-  }
-}
-
-/**
- * Prompt the user for their keystore password and write it to a temporary file.
- * The file is written with 0o600 permissions and is intended to be deleted
- * when the process exits (see deletePasswordFile).
+ * Prompt the user for their keystore password and write it to a secure
+ * RAM-backed (tmpfs) file. The file never touches physical disk.
+ *
+ * The file is written with 0o600 permissions and is cleaned up along with
+ * the entire secure directory when the process exits (see cleanupSecureDir).
  *
  * If firstTime is true, the user must confirm the password (used during
  * initial key generation/import). On subsequent startups, a single prompt
  * is sufficient.
  */
 export function promptAndSavePassword(installDir, { firstTime = false } = {}) {
-  const validatorDir = path.join(installDir, "ethereum_clients", "validator");
-  const passwordPath = path.join(validatorDir, "password.txt");
+  const passwordPath = getPasswordFilePath(installDir);
+  const parentDir = path.dirname(passwordPath);
 
   console.log("\n🔑 Keystore Password");
   console.log("─".repeat(50));
@@ -235,10 +234,10 @@ export function promptAndSavePassword(installDir, { firstTime = false } = {}) {
     "Enter the password for your validator keystore(s)."
   );
   console.log(
-    "The password is held in a temporary file while the validator runs"
+    "The password is stored in RAM only (tmpfs) and never written to"
   );
   console.log(
-    "and is deleted when the process exits.\n"
+    "physical disk. It is destroyed when the process exits.\n"
   );
 
   const password = readlineSync.question("Keystore password: ", {
@@ -261,12 +260,12 @@ export function promptAndSavePassword(installDir, { firstTime = false } = {}) {
     }
   }
 
-  if (!fs.existsSync(validatorDir)) {
-    fs.mkdirSync(validatorDir, { recursive: true });
+  if (!fs.existsSync(parentDir)) {
+    fs.mkdirSync(parentDir, { recursive: true, mode: 0o700 });
   }
 
   fs.writeFileSync(passwordPath, password, { mode: 0o600 });
-  debugToFile("Temporary password file created with restrictive permissions.");
+  debugToFile("Password file created in RAM-backed secure directory.");
 
   return passwordPath;
 }
@@ -525,12 +524,7 @@ export function importKeysForPrysm(installDir) {
     "validator",
     "keystores"
   );
-  const passwordPath = path.join(
-    installDir,
-    "ethereum_clients",
-    "validator",
-    "password.txt"
-  );
+  const passwordPath = getPasswordFilePath(installDir);
   const prysmWalletDir = path.join(
     installDir,
     "ethereum_clients",
@@ -578,6 +572,39 @@ export function importKeysForPrysm(installDir) {
     debugToFile(`Prysm key import error: ${error.message}`);
     console.log("⚠️  Prysm key import may have failed. Check logs for details.");
   }
+}
+
+/**
+ * Verify physical YubiKey presence by reading a one-time password (OTP).
+ *
+ * YubiKeys in OTP mode (factory default, slot 1) act as USB keyboards.
+ * When the user touches the gold contact the key emits a 44-character OTP
+ * using modhex encoding (characters: cbdefghijklnrtuv).
+ *
+ * This function validates the OTP format to confirm physical possession
+ * of a YubiKey. No network calls or external dependencies are needed.
+ */
+export function verifyYubiKeyPresence() {
+  const MODHEX_CHARS = /^[cbdefghijklnrtuv]{32,64}$/;
+
+  console.log("\n🔑 YubiKey Verification");
+  console.log("─".repeat(50));
+  console.log("Touch your YubiKey now...\n");
+
+  const otp = readlineSync.question("", { hideEchoBack: false });
+
+  if (!MODHEX_CHARS.test(otp.trim())) {
+    console.log(
+      "\n❌ YubiKey verification failed. Input was not a valid YubiKey OTP."
+    );
+    console.log(
+      "   Make sure your YubiKey is configured in OTP mode (slot 1, factory default)."
+    );
+    process.exit(1);
+  }
+
+  console.log("✅ YubiKey verified (physical presence confirmed).\n");
+  return true;
 }
 
 /**

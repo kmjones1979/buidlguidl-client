@@ -36,6 +36,7 @@ let feeRecipient = null;
 let graffiti = "BuidlGuidl";
 let validatorKeysDir = null;
 let mevBoostEnabled = false;
+let yubikeyEnabled = false;
 
 const filename = fileURLToPath(import.meta.url);
 let installDir = dirname(filename);
@@ -113,6 +114,9 @@ function showHelp() {
     "       --mev-boost                          Enable MEV-boost for additional execution layer rewards (optional)\n"
   );
   console.log(
+    "       --yubikey                            Require YubiKey touch (OTP) as 2FA before validator starts (optional)\n"
+  );
+  console.log(
     "      --update                              Update the execution and consensus clients to the latest version."
   );
   console.log(
@@ -147,6 +151,7 @@ function saveOptionsToFile() {
     graffiti,
     validatorKeysDir,
     mevBoostEnabled,
+    yubikeyEnabled,
   };
   fs.writeFileSync(optionsFilePath, JSON.stringify(options), {
     encoding: "utf8",
@@ -174,7 +179,7 @@ function loadOptionsFromFile() {
         throw new Error(`Invalid options file: ${field} must be a string or null`);
       }
     }
-    const boolFields = ["validatorEnabled", "mevBoostEnabled"];
+    const boolFields = ["validatorEnabled", "mevBoostEnabled", "yubikeyEnabled"];
     for (const field of boolFields) {
       if (options[field] !== undefined && typeof options[field] !== "boolean") {
         throw new Error(`Invalid options file: ${field} must be a boolean`);
@@ -210,6 +215,7 @@ if (fs.existsSync(optionsFilePath)) {
     graffiti = options.graffiti || "BuidlGuidl";
     validatorKeysDir = options.validatorKeysDir || null;
     mevBoostEnabled = options.mevBoostEnabled || false;
+    yubikeyEnabled = options.yubikeyEnabled || false;
     optionsLoaded = true;
 
     // Check if loaded geth option is being used on macOS (not supported)
@@ -276,7 +282,7 @@ if (!optionsLoaded) {
       h: "help",
       v: "validator",
     },
-    boolean: ["h", "help", "update", "archive", "validator", "mev-boost"],
+    boolean: ["h", "help", "update", "archive", "validator", "mev-boost", "yubikey"],
     unknown: (option) => {
       console.log(`Invalid option: ${option}`);
       showHelp();
@@ -425,6 +431,10 @@ if (!optionsLoaded) {
     mevBoostEnabled = true;
   }
 
+  if (argv.yubikey) {
+    yubikeyEnabled = true;
+  }
+
   // Validate that --fee-recipient is provided when --validator is enabled
   if (validatorEnabled && !feeRecipient) {
     console.log(
@@ -527,6 +537,7 @@ export {
   graffiti,
   validatorKeysDir,
   mevBoostEnabled,
+  yubikeyEnabled,
   saveOptionsToFile,
   deleteOptionsFile,
 };

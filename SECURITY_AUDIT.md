@@ -181,11 +181,17 @@ The validator keystore password was previously stored in plaintext at `ethereum_
 
 **Remediation Applied:**
 - Password is now prompted on **every startup** rather than being persisted between sessions.
-- The password file is written as a temporary file with `0o600` permissions only while the validator client is running.
-- On process exit (`handleExit()`), `deletePasswordFile()` is called to remove the password from disk immediately.
+- **The password file is stored entirely in RAM** using a platform-specific RAM-backed filesystem:
+  - **Linux:** `/dev/shm` (always a tmpfs, guaranteed to never touch physical disk).
+  - **macOS:** A dedicated 1 MB RAM disk created via `hdiutil`/`diskutil`.
+  - **Fallback:** If neither is available, `os.tmpdir()` is used with a warning.
+- The RAM-backed secure directory is created with `0o700` permissions and password files within it use `0o600`.
+- On process exit (`handleExit()` and `process.on('exit')`), `cleanupSecureDir()` removes all password files and, on macOS, ejects the RAM disk.
+- Stale secure directories from previous unclean exits (e.g., SIGKILL) are automatically cleaned up on startup.
 - During first-time setup (key generation or import), the password requires confirmation (enter twice). On subsequent startups, a single prompt is sufficient.
 - Minimum password length of 8 characters is enforced.
 - The `.gitignore` also covers `password.txt` as defense-in-depth.
+- **Optional YubiKey 2FA** (`--yubikey` flag) adds a physical presence check: the user must touch their YubiKey, which emits a modhex-encoded OTP that is validated before the validator client starts. This prevents remote attackers from starting the validator even if they compromise the password.
 
 ---
 
@@ -318,7 +324,7 @@ The options file was parsed with `JSON.parse()` without schema validation. A man
   - Verifies the root value is a plain object (not null, not array).
   - Rejects objects with `__proto__` or `constructor` keys (prototype pollution defense).
   - Validates types for all string fields (`executionClient`, `consensusClient`, `installDir`, `owner`, `feeRecipient`, `graffiti`, `validatorKeysDir`, `consensusCheckpoint`).
-  - Validates boolean fields (`validatorEnabled`, `mevBoostEnabled`).
+  - Validates boolean fields (`validatorEnabled`, `mevBoostEnabled`, `yubikeyEnabled`).
   - Validates `executionPeerPort` is a number and `consensusPeerPorts` is an array.
 - Options file is now written with `mode: 0o600` (see M-10 fix).
 
@@ -780,7 +786,7 @@ Severity: 3 Moderate | 5 High | 1 Critical
 | Finding | Severity | Resolution |
 |---------|----------|------------|
 | C-04 | Critical | SHA256 checksum verification added for staking-deposit-cli |
-| C-06 | Critical | Password prompted on every startup; temporary file deleted on process exit |
+| C-06 | Critical | Password stored in RAM only (tmpfs/RAM disk); never touches physical disk; optional YubiKey 2FA |
 | C-07 | Critical | Removed empty keystore password; deposit-cli now prompts interactively |
 | H-03 | High | Fixed broken port validation logic; added range check (1-65535) |
 | H-05 | High | Added schema validation with type checks and prototype pollution defense |

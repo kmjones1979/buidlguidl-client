@@ -21,10 +21,12 @@ import {
   graffiti,
   validatorKeysDir,
   mevBoostEnabled,
+  yubikeyEnabled,
   saveOptionsToFile,
   deleteOptionsFile,
 } from "./commandLineOptions.js";
-import { setupValidatorKeys, deletePasswordFile } from "./ethereum_client_scripts/keyManager.js";
+import { setupValidatorKeys, verifyYubiKeyPresence } from "./ethereum_client_scripts/keyManager.js";
+import { createSecureDir, cleanupSecureDir, getSecureDirPath } from "./ethereum_client_scripts/secureStore.js";
 import {
   setTelegramAlertIdentifier,
   sendTelegramAlert,
@@ -101,10 +103,10 @@ function handleExit(exitType) {
   deleteOptionsFile();
   debugToFile(`handleExit(): deleteOptionsFile() has been called`);
 
-  // Remove the temporary password file from disk (C-06 security fix)
+  // Clean up the RAM-backed secure directory (password files, secrets)
   if (validatorEnabled) {
-    deletePasswordFile(installDir);
-    debugToFile(`handleExit(): deletePasswordFile() has been called`);
+    cleanupSecureDir();
+    debugToFile(`handleExit(): cleanupSecureDir() has been called`);
   }
 
   try {
@@ -285,6 +287,10 @@ process.on("SIGUSR2", () => handleExit("SIGUSR2"));
 
 // Modify the exit listener
 process.on("exit", (code) => {
+  // Always ensure secure dir is cleaned up, even on unexpected exits
+  if (validatorEnabled) {
+    cleanupSecureDir();
+  }
   if (!isExiting) {
     handleExit("exit");
   }
@@ -465,6 +471,12 @@ async function startValidatorClient(consensusClient, installDir) {
   }
   if (mevBoostEnabled) {
     clientArgs.push("--mev-boost");
+  }
+
+  // Pass the RAM-backed secure directory so password files stay in memory
+  const secureDir = getSecureDirPath();
+  if (secureDir) {
+    clientArgs.push("--password-dir", secureDir);
   }
 
   const child = spawn("node", [clientCommand, ...clientArgs], {
@@ -675,6 +687,7 @@ if (!isAlreadyRunning()) {
     console.log("  Fee Recipient: " + feeRecipient);
     console.log("  Graffiti:      " + graffiti);
     console.log("  MEV-Boost:     " + (mevBoostEnabled ? "Enabled" : "Disabled"));
+    console.log("  YubiKey 2FA:   " + (yubikeyEnabled ? "Enabled" : "Disabled"));
     console.log("");
     console.log("  ⚠️  WARNING: Running validator keys on multiple machines");
     console.log("  simultaneously WILL result in slashing and loss of ETH.");
@@ -682,7 +695,16 @@ if (!isAlreadyRunning()) {
     console.log("═".repeat(60));
     console.log("");
 
+    // Create RAM-backed secure directory for password files (tmpfs)
+    const secureDir = createSecureDir();
+    debugToFile(`Secure directory created: ${secureDir}`);
+
     setupValidatorKeys(installDir, feeRecipient, validatorKeysDir, consensusClient);
+
+    // Optional YubiKey verification as second factor
+    if (yubikeyEnabled) {
+      verifyYubiKeyPresence();
+    }
   }
 
   // Start MEV-Boost first if enabled (beacon node connects to it)
