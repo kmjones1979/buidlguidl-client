@@ -69,7 +69,7 @@ const validatorArgs = [
   "validator",
   "--mainnet",
   "--beacon-rpc-provider=localhost:4000",
-  "--grpc-gateway-host=0.0.0.0",
+  "--grpc-gateway-host=127.0.0.1",
   "--grpc-gateway-port=7500",
   `--wallet-dir=${path.join(validatorDataDir, "database")}`,
   `--wallet-password-file=${passwordPath}`,

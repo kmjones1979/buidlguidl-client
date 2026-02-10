@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import crypto from "crypto";
-import { execSync, execFileSync, spawnSync } from "child_process";
+import { execFileSync, spawnSync } from "child_process";
 import readlineSync from "readline-sync";
 import { debugToFile } from "../helpers.js";
 import {

@@ -80,7 +80,8 @@ if (fs.existsSync(passwordFile) && fs.existsSync(keystoresDir)) {
         fs.readFileSync(path.join(keystoresDir, ksFile), "utf8")
       );
       const pubkey = ksContent.pubkey;
-      if (pubkey) {
+      // Validate pubkey is strictly hex to prevent path traversal
+      if (pubkey && /^[0-9a-fA-F]+$/.test(pubkey)) {
         const secretFile = path.join(secretsDir, `0x${pubkey}`);
         fs.writeFileSync(secretFile, password, { mode: 0o600 });
       }

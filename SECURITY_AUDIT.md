@@ -2,9 +2,11 @@
 
 **Audit Date:** February 9, 2026
 **Remediation Date:** February 10, 2026
+**Second Review Date:** February 10, 2026
 **Repository:** `git@github.com:kmjones1979/buidlguidl-client.git`
 **Initial Audit Commit:** `c74e2c1`
-**Remediation Commit:** _pending_ (post-`8000e11`)
+**Remediation Commit:** `f26cd46`
+**tmpfs/YubiKey Commit:** `dfd48cd`
 **Scope:** Full codebase audit -- all JavaScript source files, dependencies, and configuration
 
 ---
@@ -13,21 +15,21 @@
 
 The BuidlGuidl Client is a Node.js tool that automates Ethereum node management, including execution clients (Reth/Geth), consensus clients (Lighthouse/Prysm), optional validator clients for solo staking, and optional MEV-boost. It connects to the BuidlGuidl distributed RPC network and provides a terminal monitoring dashboard.
 
-The initial audit identified **7 Critical**, **8 High**, **12 Medium**, and **9 Low/Informational** findings across the codebase. A subsequent remediation pass addressed **all findings introduced by the validator support commits**, plus several pre-existing issues that were touched during the changes.
+The initial audit identified **7 Critical**, **8 High**, **12 Medium**, and **9 Low/Informational** findings across the codebase. A subsequent remediation pass addressed **all findings introduced by the validator support commits**, plus several pre-existing issues that were touched during the changes. A second review pass on the final state of all five validator-related commits identified **1 new Medium** and **3 new Low** findings; the Medium finding (M-13) and one Low (L-11) were fixed immediately.
 
 ### Severity Summary
 
-| Severity | Initial Count | Resolved | Remaining |
-|----------|---------------|----------|-----------|
-| Critical | 7 | 3 | 4 |
-| High | 8 | 3 | 5 |
-| Medium | 12 | 9 | 3 |
-| Low / Informational | 9 | 3 | 6 |
-| **Total** | **36** | **18** | **18** |
+| Severity | Initial Count | Added (2nd Review) | Resolved | Remaining |
+|----------|---------------|---------------------|----------|-----------|
+| Critical | 7 | 0 | 3 | 4 |
+| High | 8 | 0 | 3 | 5 |
+| Medium | 12 | 1 | 10 | 3 |
+| Low / Informational | 9 | 3 | 5 | 7 |
+| **Total** | **36** | **4** | **21** | **19** |
 
 ### Remediation Scope
 
-The remediation focused on findings introduced by the three validator support commits ([comparison](https://github.com/BuidlGuidl/buidlguidl-client/compare/main...kmjones1979:buidlguidl-client:main)). Several pre-existing findings (H-03, H-05, L-05, M-10, M-11) were also fixed because the relevant code was already being modified. Pre-existing findings in files not touched by the validator commits remain open.
+The remediation focused on findings introduced by the five validator support commits ([comparison](https://github.com/BuidlGuidl/buidlguidl-client/compare/main...kmjones1979:buidlguidl-client:main)). Several pre-existing findings (H-03, H-05, L-05, M-10, M-11) were also fixed because the relevant code was already being modified. Pre-existing findings in files not touched by the validator commits remain open.
 
 ---
 
@@ -588,6 +590,20 @@ Add a maximum retry count and fallback behavior.
 
 ---
 
+### [M-13] Prysm Validator gRPC Gateway Bound to All Interfaces
+
+**Severity:** Medium
+**Status:** RESOLVED (2nd review)
+**Location:** `ethereum_client_scripts/prysm_validator.js` line 72
+
+**Description:**
+The Prysm validator client's gRPC gateway was configured with `--grpc-gateway-host=0.0.0.0`, binding it to all network interfaces. This exposed the validator's HTTP API (port 7500) to the local network and potentially the internet, allowing anyone on the network to query validator status, proposer duties, and other sensitive validator information.
+
+**Remediation Applied:**
+- Changed `--grpc-gateway-host=0.0.0.0` to `--grpc-gateway-host=127.0.0.1` to restrict the gRPC gateway to localhost-only access.
+
+---
+
 ### [L-01] Floating Dependency Versions
 
 **Severity:** Low
@@ -728,6 +744,62 @@ Add a `--mev-relays` CLI option to allow users to specify custom relay URLs.
 
 ---
 
+### [L-10] YubiKey OTP Verification is Format-Only (No Cryptographic Validation)
+
+**Severity:** Low
+**Status:** OPEN (acknowledged, by design -- documented limitation)
+**Location:** `ethereum_client_scripts/keyManager.js`, `verifyYubiKeyPresence()`
+
+**Description:**
+The YubiKey verification function validates that the input matches the modhex character set and length range (`/^[cbdefghijklnrtuv]{32,64}$/`) but does **not** cryptographically verify the OTP against Yubico's validation servers or via a local HMAC-SHA1 challenge-response.
+
+A remote attacker with stdin access (e.g., SSH session, compromised terminal multiplexer) could generate a valid-format modhex string without a physical YubiKey, bypassing the physical presence check.
+
+**Threat Model:**
+- **Mitigated:** Casual remote access, automated scripts, or attackers unaware of the modhex format.
+- **Not mitigated:** Sophisticated attacker with interactive stdin access who knows about modhex encoding.
+
+**Recommendation:**
+For stronger YubiKey verification, consider:
+1. **Yubico OTP validation** via `https://api.yubico.com/wsapi/2.0/verify` (requires internet + API key)
+2. **HMAC-SHA1 challenge-response** via the `ykchalresp` tool (offline, requires YubiKey slot 2 configuration)
+
+The current format-only check is an acceptable trade-off for the stated use case (preventing unattended remote startup), as documented in the README.
+
+---
+
+### [L-11] Keystore Pubkey Not Validated Before Path Construction
+
+**Severity:** Low
+**Status:** RESOLVED (2nd review)
+**Location:** `ethereum_client_scripts/lighthouse_validator.js` line 83-84
+
+**Description:**
+The `pubkey` field extracted from keystore JSON files was used directly in `path.join(secretsDir, \`0x${pubkey}\`)` without sanitization. If a crafted keystore contained a pubkey with path separator characters (e.g., `../../tmp/evil`), the per-validator secret file could be written outside the intended secrets directory.
+
+**Practical Risk:** Low. An attacker would need write access to the keystores directory to place a malicious keystore file, at which point they already have significant system access.
+
+**Remediation Applied:**
+- Added hex-only validation (`/^[0-9a-fA-F]+$/`) on the pubkey before using it in a path. Non-hex pubkeys are silently skipped.
+
+---
+
+### [L-12] macOS Stale RAM Disk Not Cleaned on Startup
+
+**Severity:** Low
+**Status:** OPEN (acknowledged, low priority)
+**Location:** `ethereum_client_scripts/secureStore.js`
+
+**Description:**
+On Linux, `cleanupStaleDirs()` is called during startup to remove `/dev/shm/bgclient-*` directories from previous unclean exits. On macOS, there is no equivalent cleanup for stale RAM disks (`/Volumes/BGClientSecure`) from previous runs that crashed without unmounting.
+
+macOS RAM disks persist until reboot or manual `hdiutil detach`. If the process is killed with SIGKILL, the 1 MB RAM disk and its password files remain mounted until reboot.
+
+**Recommendation:**
+On macOS startup, check if `/Volumes/BGClientSecure` is already mounted and attempt to clean it up (or warn the user) before creating a new RAM disk.
+
+---
+
 ## Dependency Audit Results
 
 ```
@@ -778,6 +850,8 @@ Severity: 3 Moderate | 5 High | 1 Critical
 12. Hash MAC addresses before transmission (L-06).
 13. Add `--mev-relays` CLI option for custom relay configuration (L-09).
 14. Fix the missing `debugToFile` import in `viemClients.js` (L-03).
+15. Consider Yubico OTP cloud validation or HMAC-SHA1 challenge-response for stronger YubiKey verification (L-10).
+16. Add macOS stale RAM disk cleanup on startup (L-12).
 
 ---
 
@@ -797,9 +871,11 @@ Severity: 3 Moderate | 5 High | 1 Critical
 | M-06 | Medium | Explicitly configured Prysm gRPC port (--rpc-host/--rpc-port) on beacon node |
 | M-10 | Medium | Options file now written with 0o600 permissions |
 | M-11 | Medium | All 7 client scripts use whitelisted environment variables |
+| M-13 | Medium | Prysm validator gRPC gateway bound to 127.0.0.1 (was 0.0.0.0) |
 | L-05 | Low | Added port range validation (1-65535) for consensus peer ports |
 | L-07 | Low | Graffiti restricted to safe character set |
 | L-08 | Low | Strict regex validation for numValidators input |
+| L-11 | Low | Keystore pubkey validated as hex-only before path construction |
 
 ---
 
@@ -810,6 +886,7 @@ Severity: 3 Moderate | 5 High | 1 Critical
 - The BuidlGuidl server-side infrastructure was not in scope
 - Network-level attacks (DNS, BGP, TLS stripping) were not analyzed
 - The audit does not cover the correctness of Ethereum client configurations for consensus safety
+- The second review pass focused specifically on the five validator-related commits and the `secureStore.js`, `keyManager.js`, `lighthouse_validator.js`, `prysm_validator.js`, `mevboost.js`, `commandLineOptions.js`, and `index.js` files
 
 ---
 
