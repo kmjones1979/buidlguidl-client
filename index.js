@@ -16,9 +16,15 @@ import {
   consensusCheckpoint,
   installDir,
   owner,
+  validatorEnabled,
+  feeRecipient,
+  graffiti,
+  validatorKeysDir,
+  mevBoostEnabled,
   saveOptionsToFile,
   deleteOptionsFile,
 } from "./commandLineOptions.js";
+import { setupValidatorKeys } from "./ethereum_client_scripts/keyManager.js";
 import {
   setTelegramAlertIdentifier,
   sendTelegramAlert,
@@ -61,9 +67,13 @@ function createJwtSecret(jwtDir) {
 
 let executionChild;
 let consensusChild;
+let validatorChild;
+let mevBoostChild;
 
 let executionExited = false;
 let consensusExited = false;
+let validatorExited = false;
+let mevBoostExited = false;
 
 let isExiting = false;
 
@@ -92,10 +102,19 @@ function handleExit(exitType) {
   debugToFile(`handleExit(): deleteOptionsFile() has been called`);
 
   try {
-    // Check if both child processes have exited
+    // If validator/mev-boost are not in use, mark them as already exited
+    if (!validatorChild) validatorExited = true;
+    if (!mevBoostChild) mevBoostExited = true;
+
+    // Check if all child processes have exited
     const checkExit = () => {
-      if (executionExited && consensusExited) {
-        console.log("\n👍 Both clients exited!");
+      if (
+        executionExited &&
+        consensusExited &&
+        validatorExited &&
+        mevBoostExited
+      ) {
+        console.log("\n👍 All clients exited!");
         removeLockFile();
         process.exit(0);
       }
@@ -119,6 +138,24 @@ function handleExit(exitType) {
       }
     };
 
+    // Handle validator client exit
+    const handleValidatorExit = (code) => {
+      if (!validatorExited) {
+        validatorExited = true;
+        console.log(`🫡 Validator client exited with code ${code}`);
+        checkExit();
+      }
+    };
+
+    // Handle mev-boost exit
+    const handleMevBoostExit = (code) => {
+      if (!mevBoostExited) {
+        mevBoostExited = true;
+        console.log(`🫡 MEV-Boost exited with code ${code}`);
+        checkExit();
+      }
+    };
+
     // Handle execution client close
     const handleExecutionClose = (code) => {
       if (!executionExited) {
@@ -133,6 +170,24 @@ function handleExit(exitType) {
       if (!consensusExited) {
         consensusExited = true;
         console.log(`🫡 Consensus client closed with code ${code}`);
+        checkExit();
+      }
+    };
+
+    // Handle validator client close
+    const handleValidatorClose = (code) => {
+      if (!validatorExited) {
+        validatorExited = true;
+        console.log(`🫡 Validator client closed with code ${code}`);
+        checkExit();
+      }
+    };
+
+    // Handle mev-boost close
+    const handleMevBoostClose = (code) => {
+      if (!mevBoostExited) {
+        mevBoostExited = true;
+        console.log(`🫡 MEV-Boost closed with code ${code}`);
         checkExit();
       }
     };
@@ -152,7 +207,29 @@ function handleExit(exitType) {
       consensusExited = true;
     }
 
+    if (validatorChild && !validatorExited) {
+      validatorChild.on("exit", handleValidatorExit);
+      validatorChild.on("close", handleValidatorClose);
+    } else {
+      validatorExited = true;
+    }
+
+    if (mevBoostChild && !mevBoostExited) {
+      mevBoostChild.on("exit", handleMevBoostExit);
+      mevBoostChild.on("close", handleMevBoostClose);
+    } else {
+      mevBoostExited = true;
+    }
+
     // Send the kill signals after setting the event listeners
+    // Kill validator first (it depends on beacon node), then others
+    if (validatorChild && !validatorExited) {
+      console.log("⌛️ Exiting validator client...");
+      setTimeout(() => {
+        validatorChild.kill("SIGINT");
+      }, 500);
+    }
+
     if (executionChild && !executionExited) {
       console.log("⌛️ Exiting execution client...");
       setTimeout(() => {
@@ -167,14 +244,25 @@ function handleExit(exitType) {
       }, 750);
     }
 
-    // Initial check in case both children are already not running
+    if (mevBoostChild && !mevBoostExited) {
+      console.log("⌛️ Exiting MEV-Boost...");
+      setTimeout(() => {
+        mevBoostChild.kill("SIGINT");
+      }, 750);
+    }
+
+    // Initial check in case all children are already not running
     checkExit();
 
-    // Periodically check if both child processes have exited
+    // Periodically check if all child processes have exited
     const intervalId = setInterval(() => {
       checkExit();
-      // Clear interval if both clients have exited
-      if (executionExited && consensusExited) {
+      if (
+        executionExited &&
+        consensusExited &&
+        validatorExited &&
+        mevBoostExited
+      ) {
         clearInterval(intervalId);
       }
     }, 1000);
@@ -246,6 +334,14 @@ async function startClient(
 
     clientArgs.push("--consensuspeerports", consensusPeerPorts);
 
+    // Pass validator-related flags to beacon node
+    if (validatorEnabled && feeRecipient) {
+      clientArgs.push("--fee-recipient", feeRecipient);
+    }
+    if (mevBoostEnabled) {
+      clientArgs.push("--mev-boost");
+    }
+
     clientCommand = path.join(__dirname, "ethereum_client_scripts/prysm.js");
   } else if (clientName === "lighthouse") {
     bgConsensusPeers = await fetchBGConsensusPeers();
@@ -263,6 +359,14 @@ async function startClient(
       clientArgs.push("--consensuscheckpoint", checkpointUrl);
     }
     clientArgs.push("--consensuspeerports", consensusPeerPorts);
+
+    // Pass validator-related flags to beacon node
+    if (validatorEnabled && feeRecipient) {
+      clientArgs.push("--fee-recipient", feeRecipient);
+    }
+    if (mevBoostEnabled) {
+      clientArgs.push("--mev-boost");
+    }
 
     clientCommand = path.join(
       __dirname,
@@ -326,6 +430,121 @@ async function startClient(
   });
 }
 
+/**
+ * Start the validator client process.
+ */
+async function startValidatorClient(consensusClient, installDir) {
+  let clientCommand;
+  const clientArgs = [];
+
+  if (consensusClient === "lighthouse") {
+    clientCommand = path.join(
+      __dirname,
+      "ethereum_client_scripts/lighthouse_validator.js"
+    );
+  } else if (consensusClient === "prysm") {
+    clientCommand = path.join(
+      __dirname,
+      "ethereum_client_scripts/prysm_validator.js"
+    );
+  }
+
+  clientArgs.push("--directory", installDir);
+
+  if (feeRecipient) {
+    clientArgs.push("--fee-recipient", feeRecipient);
+  }
+  if (graffiti) {
+    clientArgs.push("--graffiti", graffiti);
+  }
+  if (mevBoostEnabled) {
+    clientArgs.push("--mev-boost");
+  }
+
+  const child = spawn("node", [clientCommand, ...clientArgs], {
+    stdio: ["inherit", "pipe", "inherit"],
+    cwd: process.env.HOME,
+    env: { ...process.env, INSTALL_DIR: installDir },
+  });
+
+  validatorChild = child;
+
+  child.on("exit", (code) => {
+    const clientLabel = `${consensusClient} validator`;
+    console.log(`🫡 ${clientLabel} process exited with code ${code}`);
+
+    // Validator crashes are critical - always alert
+    if (!isExiting && code !== null) {
+      const machineId = os.hostname();
+      const alertMessage = `🔴 CRITICAL: Validator client crashed on ${machineId} with exit code ${code}! Missed duties may result in penalties.`;
+      sendTelegramAlert("crash", alertMessage).catch((err) => {
+        debugToFile(
+          `startValidatorClient(): Failed to send crash alert - ${err.message}`
+        );
+      });
+    }
+
+    validatorExited = true;
+  });
+
+  child.on("error", (err) => {
+    console.log(`Error from validator client: ${err.message}`);
+  });
+
+  console.log(`${consensusClient} validator started`);
+
+  child.stdout.on("error", (err) => {
+    console.error(
+      `Error on stdout of ${consensusClient} validator: ${err.message}`
+    );
+  });
+}
+
+/**
+ * Start the MEV-Boost process.
+ */
+async function startMevBoost(installDir) {
+  const clientCommand = path.join(
+    __dirname,
+    "ethereum_client_scripts/mevboost.js"
+  );
+  const clientArgs = ["--directory", installDir];
+
+  const child = spawn("node", [clientCommand, ...clientArgs], {
+    stdio: ["inherit", "pipe", "inherit"],
+    cwd: process.env.HOME,
+    env: { ...process.env, INSTALL_DIR: installDir },
+  });
+
+  mevBoostChild = child;
+
+  child.on("exit", (code) => {
+    console.log(`🫡 MEV-Boost process exited with code ${code}`);
+
+    if (!isExiting && code !== null) {
+      const machineId = os.hostname();
+      const alertMessage = `🟡 MEV-Boost stopped on ${machineId} with exit code ${code}. Block proposals will use local block building.`;
+      sendTelegramAlert("crash", alertMessage).catch((err) => {
+        debugToFile(
+          `startMevBoost(): Failed to send alert - ${err.message}`
+        );
+      });
+    }
+
+    mevBoostExited = true;
+  });
+
+  child.on("error", (err) => {
+    console.log(`Error from MEV-Boost: ${err.message}`);
+  });
+
+  console.log("MEV-Boost started");
+
+  child.stdout.on("error", (err) => {
+    console.error(`Error on stdout of MEV-Boost: ${err.message}`);
+  });
+}
+
 function isAlreadyRunning() {
   try {
     if (fs.existsSync(lockFilePath)) {
@@ -365,6 +584,11 @@ const platform = os.platform();
 if (["darwin", "linux"].includes(platform)) {
   installMacLinuxClient(executionClient, platform);
   installMacLinuxClient(consensusClient, platform);
+
+  // Install MEV-Boost if enabled
+  if (mevBoostEnabled) {
+    installMacLinuxClient("mev-boost", platform);
+  }
 }
 // } else if (platform === "win32") {
 //   installWindowsExecutionClient(executionClient);
@@ -436,6 +660,32 @@ if (!isAlreadyRunning()) {
     console.log("   (skipping health checks per user request)\n");
   }
 
+  // If validator mode is enabled, show warnings and set up keys
+  if (validatorEnabled) {
+    console.log("\n" + "═".repeat(60));
+    console.log("  ⚡  VALIDATOR MODE ENABLED");
+    console.log("═".repeat(60));
+    console.log("");
+    console.log("  Fee Recipient: " + feeRecipient);
+    console.log("  Graffiti:      " + graffiti);
+    console.log("  MEV-Boost:     " + (mevBoostEnabled ? "Enabled" : "Disabled"));
+    console.log("");
+    console.log("  ⚠️  WARNING: Running validator keys on multiple machines");
+    console.log("  simultaneously WILL result in slashing and loss of ETH.");
+    console.log("  Doppelganger protection is enabled for safety.");
+    console.log("═".repeat(60));
+    console.log("");
+
+    setupValidatorKeys(installDir, feeRecipient, validatorKeysDir, consensusClient);
+  }
+
+  // Start MEV-Boost first if enabled (beacon node connects to it)
+  if (mevBoostEnabled) {
+    await startMevBoost(installDir);
+    // Give MEV-Boost a moment to start before beacon node connects
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+
   await startClient(executionClient, executionType, installDir);
   await startClient(
     consensusClient,
@@ -443,6 +693,14 @@ if (!isAlreadyRunning()) {
     installDir,
     selectedCheckpointUrl
   );
+
+  // Start validator client after beacon node (it connects to beacon API)
+  if (validatorEnabled) {
+    // Wait for beacon node API to be ready
+    console.log("⏳ Waiting for beacon node to initialize before starting validator...");
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    await startValidatorClient(consensusClient, installDir);
+  }
 
   if (owner !== null) {
     initializeWebSocketConnection(wsConfig);
@@ -465,7 +723,8 @@ initializeMonitoring(
   consensusClient,
   executionClientVer,
   consensusClientVer,
-  runsClient
+  runsClient,
+  validatorEnabled
 );
 
 let bgExecutionPeers = [];

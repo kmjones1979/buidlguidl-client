@@ -8,6 +8,7 @@ import { debugToFile } from "./../helpers.js";
 export const latestGethVer = "1.16.7";
 export const latestRethVer = "1.9.3";
 export const latestLighthouseVer = "8.0.1";
+export const latestMevBoostVer = "1.8.1";
 
 export function installMacLinuxClient(clientName, platform) {
   const arch = os.arch();
@@ -29,12 +30,14 @@ export function installMacLinuxClient(clientName, platform) {
         reth: `reth-v${latestRethVer}-x86_64-apple-darwin`,
         lighthouse: `lighthouse-v${latestLighthouseVer}-aarch64-apple-darwin`,
         prysm: "prysm.sh",
+        "mev-boost": `mev-boost_${latestMevBoostVer}_darwin_amd64`,
       },
       arm64: {
         geth: `geth-darwin-arm64-${latestGethVer}-${gethHash[latestGethVer]}`,
         reth: `reth-v${latestRethVer}-aarch64-apple-darwin`,
         lighthouse: `lighthouse-v${latestLighthouseVer}-aarch64-apple-darwin`,
         prysm: "prysm.sh",
+        "mev-boost": `mev-boost_${latestMevBoostVer}_darwin_arm64`,
       },
     },
     linux: {
@@ -43,22 +46,32 @@ export function installMacLinuxClient(clientName, platform) {
         reth: `reth-v${latestRethVer}-x86_64-unknown-linux-gnu`,
         lighthouse: `lighthouse-v${latestLighthouseVer}-x86_64-unknown-linux-gnu`,
         prysm: "prysm.sh",
+        "mev-boost": `mev-boost_${latestMevBoostVer}_linux_amd64`,
       },
       arm64: {
         geth: `geth-linux-arm64-${latestGethVer}-${gethHash[latestGethVer]}`,
         reth: `reth-v${latestRethVer}-aarch64-unknown-linux-gnu`,
         lighthouse: `lighthouse-v${latestLighthouseVer}-aarch64-unknown-linux-gnu`,
         prysm: "prysm.sh",
+        "mev-boost": `mev-boost_${latestMevBoostVer}_linux_arm64`,
       },
     },
   };
 
   const fileName = configs[platform][arch][clientName];
   const clientDir = path.join(installDir, "ethereum_clients", clientName);
-  const clientScript = path.join(
-    clientDir,
-    clientName === "prysm" ? "prysm.sh" : clientName
-  );
+
+  // Determine the expected binary/script name
+  let clientBinName;
+  if (clientName === "prysm") {
+    clientBinName = "prysm.sh";
+  } else if (clientName === "mev-boost") {
+    clientBinName = "mev-boost";
+  } else {
+    clientBinName = clientName;
+  }
+
+  const clientScript = path.join(clientDir, clientBinName);
 
   if (!fs.existsSync(clientScript)) {
     console.log(`\nInstalling ${clientName}.`);
@@ -74,6 +87,7 @@ export function installMacLinuxClient(clientName, platform) {
       lighthouse: `https://github.com/sigp/lighthouse/releases/download/v${latestLighthouseVer}/${fileName}.tar.gz`,
       prysm:
         "https://raw.githubusercontent.com/prysmaticlabs/prysm/master/prysm.sh",
+      "mev-boost": `https://github.com/flashbots/mev-boost/releases/download/v${latestMevBoostVer}/${fileName}.tar.gz`,
     };
 
     if (clientName === "prysm") {
@@ -82,6 +96,23 @@ export function installMacLinuxClient(clientName, platform) {
         `cd "${clientDir}" && curl -L -O -# ${downloadUrls.prysm} && chmod +x prysm.sh`,
         { stdio: "inherit" }
       );
+    } else if (clientName === "mev-boost") {
+      console.log("Downloading MEV-Boost.");
+      execSync(
+        `cd "${clientDir}" && curl -L -O -# ${downloadUrls["mev-boost"]}`,
+        { stdio: "inherit" }
+      );
+      console.log("Extracting MEV-Boost.");
+      execSync(`cd "${clientDir}" && tar -xzvf "${fileName}.tar.gz"`, {
+        stdio: "inherit",
+      });
+      execSync(`cd "${clientDir}" && chmod +x mev-boost`, {
+        stdio: "inherit",
+      });
+      console.log("Cleaning up mev-boost directory.");
+      execSync(`cd "${clientDir}" && rm "${fileName}.tar.gz"`, {
+        stdio: "inherit",
+      });
     } else {
       console.log(`Downloading ${clientName}.`);
       execSync(

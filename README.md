@@ -1,5 +1,5 @@
 # 📡 BuidlGuidl Client
-This project will download client executables, start a execution + consensus client pair, and provide a terminal dashboard view of client and machine info.
+This project will download client executables, start an execution + consensus client pair, and provide a terminal dashboard view of client and machine info. It also supports running a validator client for solo staking with optional MEV-boost.
 
 &nbsp;
 &nbsp;
@@ -29,7 +29,7 @@ Hint: See the one line command below if you don't want to install the dependenci
 ## Quickstart
 To get a full node started using a Reth + Lighthouse client pair:
   ```bash
-  git clone https://github.com/BuidlGuidl/buidlguidl-client.git
+  git clone git@github.com:kmjones1979/buidlguidl-client.git
   cd buidlguidl-client
   yarn install
   node index.js
@@ -97,12 +97,48 @@ Pass the --update option to update the execution and consensus clients to the la
 &nbsp;
 &nbsp;
 
+## Validator Mode (Solo Staking)
+
+You can run a validator client alongside your full node for solo staking (32 ETH per validator). Enable validator mode with the `--validator` flag and a `--fee-recipient` address:
+
+  ```bash
+  node index.js --validator --fee-recipient 0xYourEthAddress
+  ```
+
+On first run with `--validator`, you will be prompted to either generate new validator keys or import existing ones. Generated keys use the official [staking-deposit-cli](https://github.com/ethereum/staking-deposit-cli). After key generation, you must complete your 32 ETH deposit at the [Ethereum Launchpad](https://launchpad.ethereum.org/).
+
+To import existing validator keystores:
+  ```bash
+  node index.js --validator --fee-recipient 0xYourEthAddress --validator-keys-dir ~/path/to/keystores
+  ```
+
+To enable MEV-boost for additional execution layer rewards:
+  ```bash
+  node index.js --validator --fee-recipient 0xYourEthAddress --mev-boost
+  ```
+
+Custom block graffiti (default: "BuidlGuidl"):
+  ```bash
+  node index.js --validator --fee-recipient 0xYourEthAddress --graffiti "MyValidator"
+  ```
+
+**Important safety notes:**
+- **Slashing risk:** Never run the same validator keys on multiple machines simultaneously. This will result in slashing and loss of ETH.
+- **Doppelganger protection** is enabled by default to detect duplicate validators before attesting.
+- **Back up your mnemonic** securely and offline. Anyone with the mnemonic can control your validator.
+- Keystore files and passwords are stored with restrictive file permissions (0600).
+- Telegram crash alerts are sent with critical priority for validator client failures.
+
+&nbsp;
+&nbsp;
+
 Use the --help (-h) option to see all command line options:
   ```bash
   node index.js --help
 
   -e, --executionclient <client>            Specify the execution client ('reth' or 'geth')
                                             Default: reth
+                                            Note: geth is only supported on Ubuntu/Linux
 
   -c, --consensusclient <client>            Specify the consensus client ('lighthouse' or 'prysm')
                                             Default: lighthouse
@@ -125,8 +161,19 @@ Use the --help (-h) option to see all command line options:
   -o, --owner <eth address>                 Specify a owner eth address to opt in to the points system, distributed RPC network, and Telegram alerts
                                             To set up Telegram alerts for clients crashes, message /start to @BG_Client_Alert_Bot on Telegram
 
+  -v, --validator                           Enable validator mode (runs a validator client alongside the beacon node)
+
+  -fr, --fee-recipient <address>            Specify the fee recipient ETH address for execution layer rewards
+                                            Required when --validator is enabled
+
+       --graffiti <string>                  Specify custom graffiti for proposed blocks
+                                            Default: "BuidlGuidl"
+
+       --validator-keys-dir <path>          Specify a directory containing existing validator keystore files to import
+
+       --mev-boost                          Enable MEV-boost for additional execution layer rewards (optional)
+
       --update                              Update the execution and consensus clients to the latest version.
-                                            Latest versions: Reth: 1.0.0, Geth: 1.14.12, Lighthouse: 5.3.0, (Prysm is handled by its executable automatically)
 
   -h, --help                                Display this help message and exit
   ```

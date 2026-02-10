@@ -30,6 +30,11 @@ let executionPeerPort = 30303;
 let consensusPeerPorts = [null, null];
 let consensusCheckpoint = null;
 let owner = null;
+let validatorEnabled = false;
+let feeRecipient = null;
+let graffiti = "BuidlGuidl";
+let validatorKeysDir = null;
+let mevBoostEnabled = false;
 
 const filename = fileURLToPath(import.meta.url);
 let installDir = dirname(filename);
@@ -86,6 +91,27 @@ function showHelp() {
     `                                            To set up Telegram alerts for clients crashes, message /start to @BG_Client_Alert_Bot on Telegram\n`
   );
   console.log(
+    "  -v, --validator                           Enable validator mode (runs a validator client alongside the beacon node)\n"
+  );
+  console.log(
+    "  -fr, --fee-recipient <address>            Specify the fee recipient ETH address for execution layer rewards"
+  );
+  console.log(
+    "                                            Required when --validator is enabled\n"
+  );
+  console.log(
+    "       --graffiti <string>                  Specify custom graffiti for proposed blocks"
+  );
+  console.log(
+    '                                            Default: "BuidlGuidl"\n'
+  );
+  console.log(
+    "       --validator-keys-dir <path>          Specify a directory containing existing validator keystore files to import\n"
+  );
+  console.log(
+    "       --mev-boost                          Enable MEV-boost for additional execution layer rewards (optional)\n"
+  );
+  console.log(
     "      --update                              Update the execution and consensus clients to the latest version."
   );
   console.log(
@@ -115,6 +141,11 @@ function saveOptionsToFile() {
     consensusCheckpoint,
     installDir,
     owner,
+    validatorEnabled,
+    feeRecipient,
+    graffiti,
+    validatorKeysDir,
+    mevBoostEnabled,
   };
   fs.writeFileSync(optionsFilePath, JSON.stringify(options), "utf8");
 }
@@ -141,6 +172,11 @@ if (fs.existsSync(optionsFilePath)) {
     consensusCheckpoint = options.consensusCheckpoint;
     installDir = options.installDir;
     owner = options.owner;
+    validatorEnabled = options.validatorEnabled || false;
+    feeRecipient = options.feeRecipient || null;
+    graffiti = options.graffiti || "BuidlGuidl";
+    validatorKeysDir = options.validatorKeysDir || null;
+    mevBoostEnabled = options.mevBoostEnabled || false;
     optionsLoaded = true;
 
     // Check if loaded geth option is being used on macOS (not supported)
@@ -166,7 +202,7 @@ function deleteOptionsFile() {
   }
 }
 
-// Preprocess arguments to handle "-ep" and "-cp" as aliases
+// Preprocess arguments to handle "-ep", "-cp", "-fr" as aliases
 const args = process.argv.slice(2).flatMap((arg) => {
   if (arg === "-ep") {
     return "--executionpeerport";
@@ -174,6 +210,8 @@ const args = process.argv.slice(2).flatMap((arg) => {
     return "--consensuspeerports";
   } else if (arg === "-cc") {
     return "--consensuscheckpoint";
+  } else if (arg === "-fr") {
+    return "--fee-recipient";
   }
   return arg;
 });
@@ -193,6 +231,9 @@ if (!optionsLoaded) {
       "directory",
       "o",
       "owner",
+      "fee-recipient",
+      "graffiti",
+      "validator-keys-dir",
     ],
     alias: {
       e: "executionclient",
@@ -200,8 +241,9 @@ if (!optionsLoaded) {
       d: "directory",
       o: "owner",
       h: "help",
+      v: "validator",
     },
-    boolean: ["h", "help", "update", "archive"],
+    boolean: ["h", "help", "update", "archive", "validator", "mev-boost"],
     unknown: (option) => {
       console.log(`Invalid option: ${option}`);
       showHelp();
@@ -282,6 +324,59 @@ if (!optionsLoaded) {
 
   if (argv.owner) {
     owner = argv.owner;
+  }
+
+  if (argv.validator) {
+    validatorEnabled = true;
+  }
+
+  if (argv["fee-recipient"]) {
+    feeRecipient = argv["fee-recipient"];
+    // Validate ETH address format
+    if (!/^0x[0-9a-fA-F]{40}$/.test(feeRecipient)) {
+      console.log(
+        "Invalid option for --fee-recipient (-fr). Must be a valid Ethereum address (0x followed by 40 hex characters)."
+      );
+      process.exit(1);
+    }
+  }
+
+  if (argv.graffiti) {
+    graffiti = argv.graffiti;
+    if (graffiti.length > 32) {
+      console.log(
+        "Invalid option for --graffiti. Must be 32 characters or fewer."
+      );
+      process.exit(1);
+    }
+  }
+
+  if (argv["validator-keys-dir"]) {
+    validatorKeysDir = argv["validator-keys-dir"];
+    if (!isValidPath(validatorKeysDir)) {
+      console.log(
+        `Invalid option for --validator-keys-dir. '${validatorKeysDir}' is not a valid path.`
+      );
+      process.exit(1);
+    }
+  }
+
+  if (argv["mev-boost"]) {
+    mevBoostEnabled = true;
+  }
+
+  // Validate that --fee-recipient is provided when --validator is enabled
+  if (validatorEnabled && !feeRecipient) {
+    console.log(
+      "❌ Error: --fee-recipient (-fr) is required when --validator (-v) is enabled."
+    );
+    console.log(
+      "   Please provide an Ethereum address to receive execution layer rewards."
+    );
+    console.log(
+      "   Example: node index.js --validator --fee-recipient 0xYourAddress"
+    );
+    process.exit(1);
   }
 
   if (argv.update) {
@@ -367,6 +462,11 @@ export {
   consensusCheckpoint,
   installDir,
   owner,
+  validatorEnabled,
+  feeRecipient,
+  graffiti,
+  validatorKeysDir,
+  mevBoostEnabled,
   saveOptionsToFile,
   deleteOptionsFile,
 };

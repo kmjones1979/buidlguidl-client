@@ -119,6 +119,19 @@ if (argv.bgconsensusaddrs) {
   consensusArgs.push("--libp2p-addresses", bgConsensusAddrs);
 }
 
+// Validator mode: add fee recipient and MEV-boost builder endpoint
+if (argv["fee-recipient"]) {
+  consensusArgs.push("--suggested-fee-recipient", argv["fee-recipient"]);
+  debugToFile(
+    `Lighthouse: Using fee recipient: ${argv["fee-recipient"]}`
+  );
+}
+
+if (argv["mev-boost"]) {
+  consensusArgs.push("--builder", "http://localhost:18550");
+  debugToFile("Lighthouse: MEV-Boost builder endpoint enabled");
+}
+
 const consensus = pty.spawn(`${lighthouseCommand}`, consensusArgs, {
   name: "xterm-color",
   cols: 80,

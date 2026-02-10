@@ -33,10 +33,12 @@ import {
 } from "./monitor_components/updateLogic.js";
 
 import { createConsensusLog } from "./monitor_components/consensusLog.js";
+import { createValidatorLog } from "./monitor_components/validatorLog.js";
 import { createHeader } from "./monitor_components/header.js";
 
 let executionClientGlobal;
 let consensusClientGlobal;
+let validatorEnabledGlobal = false;
 
 export let statusBox = null;
 export let chainInfoBox = null;
@@ -49,11 +51,13 @@ export async function initializeMonitoring(
   consensusClient,
   executionClientVer,
   consensusClientVer,
-  runsClient
+  runsClient,
+  validatorEnabled = false
 ) {
   try {
     executionClientGlobal = executionClient;
     consensusClientGlobal = consensusClient;
+    validatorEnabledGlobal = validatorEnabled;
     let progress;
 
     if (executionClient == "geth") {
@@ -87,11 +91,6 @@ export async function initializeMonitoring(
       await getLatestLogFile(executionLogsPath, executionClient)
     );
 
-    // debugToFile(
-    //   `Monitoring ${executionClient} logs from: ${logFilePathExecution}`,
-    //   () => {}
-    // );
-
     setTimeout(() => {
       const logFilePathConsensus = path.join(
         consensusLogsPath,
@@ -105,11 +104,6 @@ export async function initializeMonitoring(
         screen,
         components.gethStageGauge
       );
-
-      // debugToFile(
-      //   `Monitoring ${consensusClient} logs from: ${logFilePathConsensus}`,
-      //   () => {}
-      // );
     }, 3000);
 
     setupLogStreaming(
@@ -119,6 +113,36 @@ export async function initializeMonitoring(
       screen,
       components.gethStageGauge
     );
+
+    // Set up validator log streaming if validator mode is active
+    if (validatorEnabled && components.validatorLog) {
+      setTimeout(() => {
+        const validatorLogsPath = path.join(
+          installDir,
+          "ethereum_clients",
+          "validator",
+          consensusClient,
+          "logs"
+        );
+
+        try {
+          const logFilePathValidator = path.join(
+            validatorLogsPath,
+            getLatestLogFile(validatorLogsPath, `${consensusClient}_validator`)
+          );
+
+          setupLogStreaming(
+            `${consensusClientGlobal}_validator`,
+            logFilePathValidator,
+            components.validatorLog,
+            screen,
+            null
+          );
+        } catch (error) {
+          debugToFile(`Error setting up validator log streaming: ${error}`);
+        }
+      }, 8000); // Give validator client extra time to start and create log file
+    }
 
     if (executionClient == "reth") {
       setInterval(() => {
@@ -173,6 +197,17 @@ function setupUI(
 
   const executionLog = createExecutionLog(grid, executionClientLabel, screen);
   const consensusLog = createConsensusLog(grid, consensusClientLabel, screen);
+
+  // Create validator log panel if validator mode is active
+  let validatorLog = null;
+  if (validatorEnabledGlobal) {
+    const validatorClientLabel =
+      consensusClientGlobal === "lighthouse"
+        ? `Lighthouse`
+        : `Prysm`;
+    validatorLog = createValidatorLog(grid, validatorClientLabel, screen);
+  }
+
   const systemStatsGauge = createSystemStatsGauge(grid, installDir);
   const peerCountGauge = createPeerCountGauge(grid);
   const cpuLine = createCpuLine(grid, screen);
@@ -199,6 +234,9 @@ function setupUI(
 
   screen.append(executionLog);
   screen.append(consensusLog);
+  if (validatorLog) {
+    screen.append(validatorLog);
+  }
   screen.append(cpuLine);
   screen.append(networkLine);
   screen.append(diskLine);
@@ -452,6 +490,7 @@ function setupUI(
     components: {
       executionLog,
       consensusLog,
+      validatorLog,
       gethStageGauge,
       rethStageGauge,
       chainInfoBox,

@@ -102,6 +102,21 @@ if (argv.bgconsensusaddrs) {
   });
 }
 
+// Validator mode: add fee recipient and MEV-boost builder endpoint
+if (argv["fee-recipient"]) {
+  consensusArgs.push(
+    `--suggested-fee-recipient=${argv["fee-recipient"]}`
+  );
+  debugToFile(`Prysm: Using fee recipient: ${argv["fee-recipient"]}`);
+}
+
+if (argv["mev-boost"]) {
+  consensusArgs.push(
+    `--http-mev-relay=http://localhost:18550`
+  );
+  debugToFile("Prysm: MEV-Boost builder endpoint enabled");
+}
+
 const consensus = pty.spawn(`${prysmCommand}`, consensusArgs, {
   name: "xterm-color",
   cols: 80,
