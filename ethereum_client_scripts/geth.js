@@ -86,7 +86,12 @@ const execution = pty.spawn(
     cols: 80,
     rows: 30,
     cwd: process.env.HOME,
-    env: { ...process.env, INSTALL_DIR: installDir },
+    env: {
+      HOME: process.env.HOME,
+      PATH: process.env.PATH,
+      TERM: process.env.TERM || "xterm-color",
+      INSTALL_DIR: installDir,
+    },
   }
 );
 

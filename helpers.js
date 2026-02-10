@@ -12,10 +12,9 @@ export function setupDebugLogging(debugLogPath) {
     if (typeof message === "object") {
       message = JSON.stringify(message, null, 2);
     }
-    fs.appendFileSync(
-      debugLogPath,
-      `[${new Date().toISOString()}] ${message}\n`
-    );
+    const fd = fs.openSync(debugLogPath, "a", 0o600);
+    fs.writeSync(fd, `[${new Date().toISOString()}] ${message}\n`);
+    fs.closeSync(fd);
   }
 
   console.log = function (message, ...optionalParams) {
@@ -47,11 +46,11 @@ export function debugToFile(data) {
     content = `${timestamp} - ${data}\n`;
   }
 
-  fs.appendFile(debugLogPath, content, (err) => {
-    if (err) {
-      console.error("Error writing to log file:", err);
-    }
-  });
+  // Create with restrictive permissions if new, then append
+  const flags = fs.existsSync(debugLogPath) ? "a" : "w";
+  const fd = fs.openSync(debugLogPath, flags, 0o600);
+  fs.writeSync(fd, content);
+  fs.closeSync(fd);
 }
 
 export function stripAnsiCodes(input) {

@@ -1,5 +1,6 @@
 import os from "os";
 import fs from "fs";
+import path from "path";
 import minimist from "minimist";
 import readlineSync from "readline-sync";
 import { fileURLToPath } from "url";
@@ -60,11 +61,11 @@ function showHelp() {
     "       --archive                            Perform an archive sync for the execution client\n"
   );
   console.log(
-    "  -ep, --executionpeerport <port>           Specify the execution peer port (must be a number)"
+    "  -ep, --executionpeerport <port>           Specify the execution peer port (must be a number between 1 and 65535)"
   );
   console.log("                                            Default: 30303\n");
   console.log(
-    "  -cp, --consensuspeerports <port>,<port>   Specify the execution peer ports (must be two comma-separated numbers)"
+    "  -cp, --consensuspeerports <port>,<port>   Specify the consensus peer ports (must be two comma-separated numbers between 1 and 65535)"
   );
   console.log(
     "                                            lighthouse defaults: 9000,9001. prysm defaults: 12000,13000\n"
@@ -100,7 +101,7 @@ function showHelp() {
     "                                            Required when --validator is enabled\n"
   );
   console.log(
-    "       --graffiti <string>                  Specify custom graffiti for proposed blocks"
+    "       --graffiti <string>                  Specify custom graffiti for proposed blocks (max 32 chars, alphanumeric + _-.:!@#)"
   );
   console.log(
     '                                            Default: "BuidlGuidl"\n'
@@ -147,13 +148,45 @@ function saveOptionsToFile() {
     validatorKeysDir,
     mevBoostEnabled,
   };
-  fs.writeFileSync(optionsFilePath, JSON.stringify(options), "utf8");
+  fs.writeFileSync(optionsFilePath, JSON.stringify(options), {
+    encoding: "utf8",
+    mode: 0o600,
+  });
 }
 
-// Function to load options from a file
+// Function to load options from a file with basic schema validation
 function loadOptionsFromFile() {
   if (fs.existsSync(optionsFilePath)) {
-    const options = JSON.parse(fs.readFileSync(optionsFilePath, "utf8"));
+    const raw = fs.readFileSync(optionsFilePath, "utf8");
+    const options = JSON.parse(raw);
+
+    // Validate types to prevent prototype pollution and unexpected values
+    if (typeof options !== "object" || options === null || Array.isArray(options)) {
+      throw new Error("Invalid options file: root must be an object");
+    }
+    if (options.__proto__ !== undefined || options.constructor !== undefined) {
+      throw new Error("Invalid options file: suspicious keys detected");
+    }
+
+    const stringFields = ["executionClient", "consensusClient", "consensusCheckpoint", "installDir", "owner", "feeRecipient", "graffiti", "validatorKeysDir"];
+    for (const field of stringFields) {
+      if (options[field] !== undefined && options[field] !== null && typeof options[field] !== "string") {
+        throw new Error(`Invalid options file: ${field} must be a string or null`);
+      }
+    }
+    const boolFields = ["validatorEnabled", "mevBoostEnabled"];
+    for (const field of boolFields) {
+      if (options[field] !== undefined && typeof options[field] !== "boolean") {
+        throw new Error(`Invalid options file: ${field} must be a boolean`);
+      }
+    }
+    if (options.executionPeerPort !== undefined && typeof options.executionPeerPort !== "number") {
+      throw new Error("Invalid options file: executionPeerPort must be a number");
+    }
+    if (options.consensusPeerPorts !== undefined && !Array.isArray(options.consensusPeerPorts)) {
+      throw new Error("Invalid options file: consensusPeerPorts must be an array");
+    }
+
     return options;
   } else {
     debugToFile(`loadOptionsFromFile(): Options file not found`);
@@ -286,9 +319,9 @@ if (!optionsLoaded) {
 
   if (argv.executionpeerport) {
     executionPeerPort = parseInt(argv.executionpeerport, 10);
-    if (executionPeerPort === "number" && !isNaN(executionPeerPort)) {
+    if (isNaN(executionPeerPort) || executionPeerPort < 1 || executionPeerPort > 65535) {
       console.log(
-        "Invalid option for --executionpeerport (-ep). Must be a number."
+        "Invalid option for --executionpeerport (-ep). Must be a number between 1 and 65535."
       );
       process.exit(1);
     }
@@ -299,10 +332,14 @@ if (!optionsLoaded) {
       .split(",")
       .map((port) => parseInt(port.trim(), 10));
 
-    // Check if there are exactly two ports and if both are valid numbers
-    if (consensusPeerPorts.length !== 2 || consensusPeerPorts.some(isNaN)) {
+    // Check if there are exactly two ports and if both are valid numbers in range
+    if (
+      consensusPeerPorts.length !== 2 ||
+      consensusPeerPorts.some(isNaN) ||
+      consensusPeerPorts.some((p) => p < 1 || p > 65535)
+    ) {
       console.log(
-        "Invalid option for --consensuspeerports (-cp). Must be two comma-separated numbers (e.g., 9000,9001)."
+        "Invalid option for --consensuspeerports (-cp). Must be two comma-separated numbers between 1 and 65535 (e.g., 9000,9001)."
       );
       process.exit(1);
     }
@@ -313,10 +350,18 @@ if (!optionsLoaded) {
   }
 
   if (argv.directory) {
-    installDir = argv.directory;
+    installDir = path.resolve(argv.directory);
     if (!isValidPath(installDir)) {
       console.log(
         `Invalid option for --directory (-d). '${installDir}' is not a valid path.`
+      );
+      process.exit(1);
+    }
+    // Prevent path traversal into system directories
+    const homeDir = os.homedir();
+    if (!installDir.startsWith(homeDir) && !installDir.startsWith("/opt") && !installDir.startsWith("/srv")) {
+      console.log(
+        `Invalid option for --directory (-d). Path must be within your home directory, /opt, or /srv.`
       );
       process.exit(1);
     }
@@ -349,13 +394,28 @@ if (!optionsLoaded) {
       );
       process.exit(1);
     }
+    // Restrict graffiti to safe characters (alphanumeric, spaces, basic punctuation)
+    if (!/^[a-zA-Z0-9 _\-.:!@#]+$/.test(graffiti)) {
+      console.log(
+        "Invalid option for --graffiti. Only alphanumeric characters, spaces, and basic punctuation (_-.:!@#) are allowed."
+      );
+      process.exit(1);
+    }
   }
 
   if (argv["validator-keys-dir"]) {
-    validatorKeysDir = argv["validator-keys-dir"];
+    validatorKeysDir = path.resolve(argv["validator-keys-dir"]);
     if (!isValidPath(validatorKeysDir)) {
       console.log(
         `Invalid option for --validator-keys-dir. '${validatorKeysDir}' is not a valid path.`
+      );
+      process.exit(1);
+    }
+    // Prevent path traversal into system directories
+    const homeDir2 = os.homedir();
+    if (!validatorKeysDir.startsWith(homeDir2) && !validatorKeysDir.startsWith("/opt") && !validatorKeysDir.startsWith("/srv")) {
+      console.log(
+        `Invalid option for --validator-keys-dir. Path must be within your home directory, /opt, or /srv.`
       );
       process.exit(1);
     }

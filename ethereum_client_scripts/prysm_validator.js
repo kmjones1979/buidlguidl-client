@@ -93,8 +93,9 @@ if (mevBoostEnabled) {
   validatorArgs.push("--enable-builder");
 }
 
+// Log startup without exposing full filesystem paths or passwords
 debugToFile(
-  `Prysm Validator: Starting with args: ${validatorArgs.join(" ")}`
+  `Prysm Validator: Starting (fee-recipient: ${feeRecipient ? "set" : "none"}, graffiti: ${graffiti}, mev-boost: ${mevBoostEnabled})`
 );
 
 const validator = pty.spawn(`${prysmCommand}`, validatorArgs, {
@@ -102,7 +103,12 @@ const validator = pty.spawn(`${prysmCommand}`, validatorArgs, {
   cols: 80,
   rows: 30,
   cwd: process.env.HOME,
-  env: { ...process.env, INSTALL_DIR: installDir },
+  env: {
+    HOME: process.env.HOME,
+    PATH: process.env.PATH,
+    TERM: process.env.TERM || "xterm-color",
+    INSTALL_DIR: installDir,
+  },
 });
 
 // Pipe stdout and stderr to the log file and to the parent process

@@ -74,6 +74,8 @@ const consensusArgs = [
   "--accept-terms-of-use=true",
   "--jwt-secret",
   jwtPath,
+  "--rpc-host=127.0.0.1",
+  "--rpc-port=4000",
   "--monitoring-host",
   "127.0.0.1",
   "--monitoring-port",
@@ -122,7 +124,12 @@ const consensus = pty.spawn(`${prysmCommand}`, consensusArgs, {
   cols: 80,
   rows: 30,
   cwd: process.env.HOME,
-  env: { ...process.env, INSTALL_DIR: installDir },
+  env: {
+    HOME: process.env.HOME,
+    PATH: process.env.PATH,
+    TERM: process.env.TERM || "xterm-color",
+    INSTALL_DIR: installDir,
+  },
 });
 
 // Pipe stdout and stderr to the log file and to the parent process

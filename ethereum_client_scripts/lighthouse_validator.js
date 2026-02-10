@@ -51,11 +51,46 @@ const keystoresDir = path.join(
   "keystores"
 );
 
-const passwordDir = path.join(
+const secretsDir = path.join(
   installDir,
   "ethereum_clients",
-  "validator"
+  "validator",
+  "secrets"
 );
+
+const passwordFile = path.join(
+  installDir,
+  "ethereum_clients",
+  "validator",
+  "password.txt"
+);
+
+// Lighthouse expects --secrets-dir to contain one file per validator,
+// named after the validator's public key, each containing the keystore password.
+// Populate the secrets dir from the master password file and keystore filenames.
+if (fs.existsSync(passwordFile) && fs.existsSync(keystoresDir)) {
+  if (!fs.existsSync(secretsDir)) {
+    fs.mkdirSync(secretsDir, { recursive: true });
+  }
+  const password = fs.readFileSync(passwordFile, "utf8");
+  const keystoreFiles = fs.readdirSync(keystoresDir).filter(
+    (f) => f.startsWith("keystore") && f.endsWith(".json")
+  );
+  for (const ksFile of keystoreFiles) {
+    try {
+      const ksContent = JSON.parse(
+        fs.readFileSync(path.join(keystoresDir, ksFile), "utf8")
+      );
+      const pubkey = ksContent.pubkey;
+      if (pubkey) {
+        const secretFile = path.join(secretsDir, `0x${pubkey}`);
+        fs.writeFileSync(secretFile, password, { mode: 0o600 });
+      }
+    } catch (e) {
+      debugToFile(`Warning: could not read keystore ${ksFile}: ${e.message}`);
+    }
+  }
+}
 
 const logsDir = path.join(validatorDataDir, "logs");
 
@@ -82,7 +117,7 @@ const validatorArgs = [
   "--validators-dir",
   keystoresDir,
   "--secrets-dir",
-  passwordDir,
+  secretsDir,
   "--metrics",
   "--metrics-address",
   "127.0.0.1",
@@ -103,8 +138,9 @@ if (mevBoostEnabled) {
   validatorArgs.push("--builder-proposals");
 }
 
+// Log startup without exposing full filesystem paths
 debugToFile(
-  `Lighthouse Validator: Starting with args: ${validatorArgs.join(" ")}`
+  `Lighthouse Validator: Starting (fee-recipient: ${feeRecipient ? "set" : "none"}, graffiti: ${graffiti}, mev-boost: ${mevBoostEnabled})`
 );
 
 const validator = pty.spawn(`${lighthouseCommand}`, validatorArgs, {
@@ -112,7 +148,12 @@ const validator = pty.spawn(`${lighthouseCommand}`, validatorArgs, {
   cols: 80,
   rows: 30,
   cwd: process.env.HOME,
-  env: { ...process.env, INSTALL_DIR: installDir },
+  env: {
+    HOME: process.env.HOME,
+    PATH: process.env.PATH,
+    TERM: process.env.TERM || "xterm-color",
+    INSTALL_DIR: installDir,
+  },
 });
 
 // Pipe stdout and stderr to the log file and to the parent process

@@ -1,11 +1,35 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { execSync } from "child_process";
+import crypto from "crypto";
+import { execSync, execFileSync, spawnSync } from "child_process";
 import readlineSync from "readline-sync";
 import { debugToFile } from "../helpers.js";
 
 const latestDepositCliVer = "2.7.0";
+
+/**
+ * Expected SHA256 checksums for staking-deposit-cli v2.7.0 archives.
+ * Source: https://github.com/ethereum/staking-deposit-cli/releases/tag/v2.7.0
+ */
+const DEPOSIT_CLI_CHECKSUMS = {
+  "staking_deposit-cli-fdab65d-darwin-amd64.tar.gz":
+    "8f33bdb78dfbe334ac25d4d5146bb58a43a06b4f3ab02268ceaf003de1ebc4c3",
+  "staking_deposit-cli-fdab65d-linux-amd64.tar.gz":
+    "ac3151843d681c92ae75567a88fbe0e040d53c21368cc1ed1a8c3d9fb29f2a3a",
+  "staking_deposit-cli-fdab65d-linux-arm64.tar.gz":
+    "e9ba5baadd5fe0a30c3f222d8cf66cccdd414c7748d095a2c0540904deff3bac",
+};
+
+/**
+ * Verify the SHA256 checksum of a file against an expected value.
+ * Returns true if the checksum matches, false otherwise.
+ */
+function verifySha256(filePath, expectedHash) {
+  const fileBuffer = fs.readFileSync(filePath);
+  const hash = crypto.createHash("sha256").update(fileBuffer).digest("hex");
+  return hash === expectedHash;
+}
 
 /**
  * Get the staking-deposit-cli download URL and filename for the current platform.
@@ -13,10 +37,12 @@ const latestDepositCliVer = "2.7.0";
 function getDepositCliConfig(platform) {
   const arch = os.arch();
 
+  // Note: macOS arm64 (Apple Silicon) uses the amd64 build via Rosetta 2.
+  // There is no official darwin-arm64 build for v2.7.0.
   const configs = {
     darwin: {
       x64: `staking_deposit-cli-fdab65d-darwin-amd64`,
-      arm64: `staking_deposit-cli-fdab65d-darwin-arm64`,
+      arm64: `staking_deposit-cli-fdab65d-darwin-amd64`,
     },
     linux: {
       x64: `staking_deposit-cli-fdab65d-linux-amd64`,
@@ -38,6 +64,7 @@ function getDepositCliConfig(platform) {
 
 /**
  * Install the staking-deposit-cli if not already present.
+ * Downloads the binary, verifies its SHA256 checksum, and extracts it.
  */
 export function installDepositCli(installDir, platform) {
   const depositCliDir = path.join(
@@ -59,29 +86,53 @@ export function installDepositCli(installDir, platform) {
   }
 
   const { fileName, downloadUrl } = getDepositCliConfig(platform);
+  const archiveName = `${fileName}.tar.gz`;
+  const archivePath = path.join(depositCliDir, archiveName);
 
+  // Download using execFileSync (no shell interpolation)
   console.log("Downloading staking-deposit-cli...");
-  execSync(`cd "${depositCliDir}" && curl -L -O -# ${downloadUrl}`, {
+  execFileSync("curl", ["-L", "-o", archivePath, "-#", downloadUrl], {
     stdio: "inherit",
   });
 
+  // Verify SHA256 checksum
+  const expectedChecksum = DEPOSIT_CLI_CHECKSUMS[archiveName];
+  if (!expectedChecksum) {
+    console.log(`❌ No known checksum for ${archiveName}. Aborting for safety.`);
+    fs.unlinkSync(archivePath);
+    process.exit(1);
+  }
+
+  console.log("Verifying SHA256 checksum...");
+  if (!verifySha256(archivePath, expectedChecksum)) {
+    console.log("❌ SHA256 checksum verification FAILED!");
+    console.log("   The downloaded file may be corrupted or tampered with.");
+    console.log("   Aborting installation for safety.");
+    fs.unlinkSync(archivePath);
+    process.exit(1);
+  }
+  console.log("✅ Checksum verified.");
+
+  // Extract using execFileSync (no shell interpolation)
   console.log("Extracting staking-deposit-cli...");
-  execSync(`cd "${depositCliDir}" && tar -xzvf "${fileName}.tar.gz"`, {
+  execFileSync("tar", ["-xzf", archivePath, "-C", depositCliDir], {
     stdio: "inherit",
   });
 
   // Move the binary out of the extracted directory
-  execSync(`cd "${depositCliDir}/${fileName}" && mv deposit ..`, {
-    stdio: "inherit",
-  });
+  const extractedBin = path.join(depositCliDir, fileName, "deposit");
+  if (fs.existsSync(extractedBin)) {
+    fs.renameSync(extractedBin, depositCliBin);
+    fs.chmodSync(depositCliBin, 0o755);
+  }
 
-  // Cleanup
-  execSync(
-    `cd "${depositCliDir}" && rm -rf "${fileName}" "${fileName}.tar.gz"`,
-    {
-      stdio: "inherit",
-    }
-  );
+  // Cleanup: remove the archive and extracted directory
+  try {
+    fs.unlinkSync(archivePath);
+    fs.rmSync(path.join(depositCliDir, fileName), { recursive: true, force: true });
+  } catch (e) {
+    debugToFile(`Cleanup warning: ${e.message}`);
+  }
 
   console.log("staking-deposit-cli installed successfully.\n");
   return depositCliBin;
@@ -132,49 +183,82 @@ export function hasExistingKeys(installDir) {
 }
 
 /**
- * Check if a password file exists.
+ * Get the path where the password file would be stored.
  */
-export function hasPasswordFile(installDir) {
-  const passwordPath = path.join(
+export function getPasswordFilePath(installDir) {
+  return path.join(
     installDir,
     "ethereum_clients",
     "validator",
     "password.txt"
   );
-  return fs.existsSync(passwordPath);
 }
 
 /**
- * Prompt the user for their keystore password and save it securely.
+ * Check if a password file exists.
  */
-export function promptAndSavePassword(installDir) {
+export function hasPasswordFile(installDir) {
+  return fs.existsSync(getPasswordFilePath(installDir));
+}
+
+/**
+ * Delete the password file from disk (called on process exit for security).
+ */
+export function deletePasswordFile(installDir) {
+  const passwordPath = getPasswordFilePath(installDir);
+  try {
+    if (fs.existsSync(passwordPath)) {
+      fs.unlinkSync(passwordPath);
+      debugToFile("Password file removed from disk.");
+    }
+  } catch (e) {
+    debugToFile(`Warning: could not delete password file: ${e.message}`);
+  }
+}
+
+/**
+ * Prompt the user for their keystore password and write it to a temporary file.
+ * The file is written with 0o600 permissions and is intended to be deleted
+ * when the process exits (see deletePasswordFile).
+ *
+ * If firstTime is true, the user must confirm the password (used during
+ * initial key generation/import). On subsequent startups, a single prompt
+ * is sufficient.
+ */
+export function promptAndSavePassword(installDir, { firstTime = false } = {}) {
   const validatorDir = path.join(installDir, "ethereum_clients", "validator");
   const passwordPath = path.join(validatorDir, "password.txt");
 
-  if (fs.existsSync(passwordPath)) {
-    return passwordPath;
-  }
-
-  console.log("\n🔑 Keystore Password Setup");
+  console.log("\n🔑 Keystore Password");
   console.log("─".repeat(50));
   console.log(
     "Enter the password for your validator keystore(s)."
   );
   console.log(
-    "This will be stored locally to allow the validator client to start automatically.\n"
+    "The password is held in a temporary file while the validator runs"
+  );
+  console.log(
+    "and is deleted when the process exits.\n"
   );
 
   const password = readlineSync.question("Keystore password: ", {
     hideEchoBack: true,
   });
 
-  const confirmPassword = readlineSync.question("Confirm password: ", {
-    hideEchoBack: true,
-  });
-
-  if (password !== confirmPassword) {
-    console.log("❌ Passwords do not match. Please try again.");
+  if (password.length < 8) {
+    console.log("❌ Password must be at least 8 characters long.");
     process.exit(1);
+  }
+
+  if (firstTime) {
+    const confirmPassword = readlineSync.question("Confirm password: ", {
+      hideEchoBack: true,
+    });
+
+    if (password !== confirmPassword) {
+      console.log("❌ Passwords do not match. Please try again.");
+      process.exit(1);
+    }
   }
 
   if (!fs.existsSync(validatorDir)) {
@@ -182,7 +266,7 @@ export function promptAndSavePassword(installDir) {
   }
 
   fs.writeFileSync(passwordPath, password, { mode: 0o600 });
-  debugToFile("Keystore password file created with restrictive permissions.");
+  debugToFile("Temporary password file created with restrictive permissions.");
 
   return passwordPath;
 }
@@ -219,7 +303,16 @@ export function generateValidatorKeys(installDir, feeRecipient) {
   const numValidatorsStr = readlineSync.question(
     "\nHow many validators to create? (default: 1): "
   );
-  const numValidators = parseInt(numValidatorsStr, 10) || 1;
+
+  let numValidators = 1;
+  if (numValidatorsStr.trim() !== "") {
+    // Strict numeric validation: reject strings like "5abc"
+    if (!/^\d+$/.test(numValidatorsStr.trim())) {
+      console.log("❌ Invalid input. Please enter a whole number.");
+      process.exit(1);
+    }
+    numValidators = parseInt(numValidatorsStr.trim(), 10);
+  }
 
   if (numValidators < 1 || numValidators > 100) {
     console.log("❌ Number of validators must be between 1 and 100.");
@@ -245,19 +338,22 @@ export function generateValidatorKeys(installDir, feeRecipient) {
     "You will be prompted by the deposit-cli to create a keystore password and confirm your mnemonic.\n"
   );
 
+  const outputFolder = path.join(installDir, "ethereum_clients", "validator");
+
   try {
-    execSync(
-      `"${depositCliBin}" new-mnemonic ` +
-        `--chain mainnet ` +
-        `--num_validators ${numValidators} ` +
-        `--execution_address ${withdrawalAddress} ` +
-        `--keystore_password "" ` +
-        `--folder "${path.join(installDir, "ethereum_clients", "validator")}"`,
-      {
-        stdio: "inherit",
-        cwd: path.join(installDir, "ethereum_clients", "validator"),
-      }
-    );
+    // Let deposit-cli prompt for password interactively (do NOT pass empty password)
+    const depositCliArgs = [
+      "new-mnemonic",
+      "--chain", "mainnet",
+      "--num_validators", String(numValidators),
+      "--execution_address", withdrawalAddress,
+      "--folder", outputFolder,
+    ];
+
+    execFileSync(depositCliBin, depositCliArgs, {
+      stdio: "inherit",
+      cwd: outputFolder,
+    });
   } catch (error) {
     debugToFile(`Key generation error: ${error.message}`);
     console.log(
@@ -318,8 +414,8 @@ export function generateValidatorKeys(installDir, feeRecipient) {
   );
   console.log("─".repeat(60));
 
-  // Prompt password for auto-start
-  promptAndSavePassword(installDir);
+  // Prompt password for the session (first time setup)
+  promptAndSavePassword(installDir, { firstTime: true });
 
   return true;
 }
@@ -413,8 +509,8 @@ export function importValidatorKeys(installDir, keysSourceDir, consensusClient) 
 
   console.log(`\n✅ Successfully imported ${keystoreFiles.length} keystore(s).`);
 
-  // Prompt for password
-  promptAndSavePassword(installDir);
+  // Prompt for password (first time setup)
+  promptAndSavePassword(installDir, { firstTime: true });
 
   return true;
 }
@@ -466,18 +562,17 @@ export function importKeysForPrysm(installDir) {
   console.log("\n🔄 Importing keys into Prysm validator wallet...");
 
   try {
-    execSync(
-      `"${prysmCommand}" validator accounts import ` +
-        `--keys-dir="${keystoresDir}" ` +
-        `--wallet-dir="${prysmWalletDir}" ` +
-        `--wallet-password-file="${passwordPath}" ` +
-        `--account-password-file="${passwordPath}" ` +
-        `--mainnet ` +
-        `--accept-terms-of-use`,
-      {
-        stdio: "inherit",
-      }
-    );
+    execFileSync(prysmCommand, [
+      "validator", "accounts", "import",
+      `--keys-dir=${keystoresDir}`,
+      `--wallet-dir=${prysmWalletDir}`,
+      `--wallet-password-file=${passwordPath}`,
+      `--account-password-file=${passwordPath}`,
+      "--mainnet",
+      "--accept-terms-of-use",
+    ], {
+      stdio: "inherit",
+    });
     console.log("✅ Keys imported into Prysm wallet successfully.");
   } catch (error) {
     debugToFile(`Prysm key import error: ${error.message}`);
@@ -499,10 +594,8 @@ export function setupValidatorKeys(
   if (hasExistingKeys(installDir)) {
     console.log("\n✅ Existing validator keystores found. Skipping key setup.");
 
-    // Ensure password file exists
-    if (!hasPasswordFile(installDir)) {
-      promptAndSavePassword(installDir);
-    }
+    // Always prompt for password on startup (never persist between sessions)
+    promptAndSavePassword(installDir);
 
     return;
   }

@@ -24,7 +24,7 @@ import {
   saveOptionsToFile,
   deleteOptionsFile,
 } from "./commandLineOptions.js";
-import { setupValidatorKeys } from "./ethereum_client_scripts/keyManager.js";
+import { setupValidatorKeys, deletePasswordFile } from "./ethereum_client_scripts/keyManager.js";
 import {
   setTelegramAlertIdentifier,
   sendTelegramAlert,
@@ -100,6 +100,12 @@ function handleExit(exitType) {
 
   deleteOptionsFile();
   debugToFile(`handleExit(): deleteOptionsFile() has been called`);
+
+  // Remove the temporary password file from disk (C-06 security fix)
+  if (validatorEnabled) {
+    deletePasswordFile(installDir);
+    debugToFile(`handleExit(): deletePasswordFile() has been called`);
+  }
 
   try {
     // If validator/mev-boost are not in use, mark them as already exited

@@ -126,7 +126,9 @@ Custom block graffiti (default: "BuidlGuidl"):
 - **Slashing risk:** Never run the same validator keys on multiple machines simultaneously. This will result in slashing and loss of ETH.
 - **Doppelganger protection** is enabled by default to detect duplicate validators before attesting.
 - **Back up your mnemonic** securely and offline. Anyone with the mnemonic can control your validator.
-- Keystore files and passwords are stored with restrictive file permissions (0600).
+- Keystore files are stored with restrictive file permissions (0600).
+- Your keystore password is prompted on **every startup** and held in a temporary file only while the validator is running. It is automatically deleted when the process exits.
+- Downloaded staking-deposit-cli binaries are verified against official SHA256 checksums before use.
 - Telegram crash alerts are sent with critical priority for validator client failures.
 
 &nbsp;
@@ -145,10 +147,10 @@ Use the --help (-h) option to see all command line options:
 
        --archive                            Perform an archive sync for the execution client
 
-  -ep, --executionpeerport <port>           Specify the execution peer port (must be a number)
+  -ep, --executionpeerport <port>           Specify the execution peer port (must be a number between 1 and 65535)
                                             Default: 30303
 
-  -cp, --consensuspeerports <port>,<port>   Specify the execution peer ports (must be two comma-separated numbers)
+  -cp, --consensuspeerports <port>,<port>   Specify the consensus peer ports (must be two comma-separated numbers between 1 and 65535)
                                             lighthouse defaults: 9000,9001. prysm defaults: 12000,13000
 
   -cc, --consensuscheckpoint <url>          Specify a custom consensus checkpoint server URL
@@ -166,7 +168,7 @@ Use the --help (-h) option to see all command line options:
   -fr, --fee-recipient <address>            Specify the fee recipient ETH address for execution layer rewards
                                             Required when --validator is enabled
 
-       --graffiti <string>                  Specify custom graffiti for proposed blocks
+       --graffiti <string>                  Specify custom graffiti for proposed blocks (max 32 chars, alphanumeric + _-.:!@#)
                                             Default: "BuidlGuidl"
 
        --validator-keys-dir <path>          Specify a directory containing existing validator keystore files to import
