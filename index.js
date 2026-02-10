@@ -21,11 +21,10 @@ import {
   graffiti,
   validatorKeysDir,
   mevBoostEnabled,
-  yubikeyEnabled,
   saveOptionsToFile,
   deleteOptionsFile,
 } from "./commandLineOptions.js";
-import { setupValidatorKeys, verifyYubiKeyPresence } from "./ethereum_client_scripts/keyManager.js";
+import { setupValidatorKeys } from "./ethereum_client_scripts/keyManager.js";
 import { createSecureDir, cleanupSecureDir, getSecureDirPath } from "./ethereum_client_scripts/secureStore.js";
 import {
   setTelegramAlertIdentifier,
@@ -687,7 +686,6 @@ if (!isAlreadyRunning()) {
     console.log("  Fee Recipient: " + feeRecipient);
     console.log("  Graffiti:      " + graffiti);
     console.log("  MEV-Boost:     " + (mevBoostEnabled ? "Enabled" : "Disabled"));
-    console.log("  YubiKey 2FA:   " + (yubikeyEnabled ? "Enabled" : "Disabled"));
     console.log("");
     console.log("  ⚠️  WARNING: Running validator keys on multiple machines");
     console.log("  simultaneously WILL result in slashing and loss of ETH.");
@@ -700,11 +698,6 @@ if (!isAlreadyRunning()) {
     debugToFile(`Secure directory created: ${secureDir}`);
 
     setupValidatorKeys(installDir, feeRecipient, validatorKeysDir, consensusClient);
-
-    // Optional YubiKey verification as second factor
-    if (yubikeyEnabled) {
-      verifyYubiKeyPresence();
-    }
   }
 
   // Start MEV-Boost first if enabled (beacon node connects to it)

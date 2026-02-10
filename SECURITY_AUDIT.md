@@ -19,13 +19,13 @@ The initial audit identified **7 Critical**, **8 High**, **12 Medium**, and **9 
 
 ### Severity Summary
 
-| Severity | Initial Count | Added (2nd Review) | Resolved | Remaining |
-|----------|---------------|---------------------|----------|-----------|
+| Severity | Initial Count | Added (2nd Review) | Resolved / Removed | Remaining |
+|----------|---------------|---------------------|---------------------|-----------|
 | Critical | 7 | 0 | 3 | 4 |
 | High | 8 | 0 | 3 | 5 |
 | Medium | 12 | 1 | 10 | 3 |
-| Low / Informational | 9 | 3 | 5 | 7 |
-| **Total** | **36** | **4** | **21** | **19** |
+| Low / Informational | 9 | 3 | 6 | 6 |
+| **Total** | **36** | **4** | **22** | **18** |
 
 ### Remediation Scope
 
@@ -193,7 +193,6 @@ The validator keystore password was previously stored in plaintext at `ethereum_
 - During first-time setup (key generation or import), the password requires confirmation (enter twice). On subsequent startups, a single prompt is sufficient.
 - Minimum password length of 8 characters is enforced.
 - The `.gitignore` also covers `password.txt` as defense-in-depth.
-- **Optional YubiKey 2FA** (`--yubikey` flag) adds a physical presence check: the user must touch their YubiKey, which emits a modhex-encoded OTP that is validated before the validator client starts. This prevents remote attackers from starting the validator even if they compromise the password.
 
 ---
 
@@ -326,7 +325,7 @@ The options file was parsed with `JSON.parse()` without schema validation. A man
   - Verifies the root value is a plain object (not null, not array).
   - Rejects objects with `__proto__` or `constructor` keys (prototype pollution defense).
   - Validates types for all string fields (`executionClient`, `consensusClient`, `installDir`, `owner`, `feeRecipient`, `graffiti`, `validatorKeysDir`, `consensusCheckpoint`).
-  - Validates boolean fields (`validatorEnabled`, `mevBoostEnabled`, `yubikeyEnabled`).
+  - Validates boolean fields (`validatorEnabled`, `mevBoostEnabled`).
   - Validates `executionPeerPort` is a number and `consensusPeerPorts` is an array.
 - Options file is now written with `mode: 0o600` (see M-10 fix).
 
@@ -744,27 +743,10 @@ Add a `--mev-relays` CLI option to allow users to specify custom relay URLs.
 
 ---
 
-### [L-10] YubiKey OTP Verification is Format-Only (No Cryptographic Validation)
+### [L-10] ~~YubiKey OTP Verification is Format-Only~~
 
 **Severity:** Low
-**Status:** OPEN (acknowledged, by design -- documented limitation)
-**Location:** `ethereum_client_scripts/keyManager.js`, `verifyYubiKeyPresence()`
-
-**Description:**
-The YubiKey verification function validates that the input matches the modhex character set and length range (`/^[cbdefghijklnrtuv]{32,64}$/`) but does **not** cryptographically verify the OTP against Yubico's validation servers or via a local HMAC-SHA1 challenge-response.
-
-A remote attacker with stdin access (e.g., SSH session, compromised terminal multiplexer) could generate a valid-format modhex string without a physical YubiKey, bypassing the physical presence check.
-
-**Threat Model:**
-- **Mitigated:** Casual remote access, automated scripts, or attackers unaware of the modhex format.
-- **Not mitigated:** Sophisticated attacker with interactive stdin access who knows about modhex encoding.
-
-**Recommendation:**
-For stronger YubiKey verification, consider:
-1. **Yubico OTP validation** via `https://api.yubico.com/wsapi/2.0/verify` (requires internet + API key)
-2. **HMAC-SHA1 challenge-response** via the `ykchalresp` tool (offline, requires YubiKey slot 2 configuration)
-
-The current format-only check is an acceptable trade-off for the stated use case (preventing unattended remote startup), as documented in the README.
+**Status:** REMOVED -- The `--yubikey` feature was removed entirely. Format-only OTP validation (without cryptographic verification against Yubico servers) provided negligible security benefit and could give users a false sense of security. Any attacker with stdin access could trivially bypass the check by typing modhex characters.
 
 ---
 
@@ -850,8 +832,7 @@ Severity: 3 Moderate | 5 High | 1 Critical
 12. Hash MAC addresses before transmission (L-06).
 13. Add `--mev-relays` CLI option for custom relay configuration (L-09).
 14. Fix the missing `debugToFile` import in `viemClients.js` (L-03).
-15. Consider Yubico OTP cloud validation or HMAC-SHA1 challenge-response for stronger YubiKey verification (L-10).
-16. Add macOS stale RAM disk cleanup on startup (L-12).
+15. Add macOS stale RAM disk cleanup on startup (L-12).
 
 ---
 
@@ -860,7 +841,7 @@ Severity: 3 Moderate | 5 High | 1 Critical
 | Finding | Severity | Resolution |
 |---------|----------|------------|
 | C-04 | Critical | SHA256 checksum verification added for staking-deposit-cli |
-| C-06 | Critical | Password stored in RAM only (tmpfs/RAM disk); never touches physical disk; optional YubiKey 2FA |
+| C-06 | Critical | Password stored in RAM only (tmpfs/RAM disk); never touches physical disk |
 | C-07 | Critical | Removed empty keystore password; deposit-cli now prompts interactively |
 | H-03 | High | Fixed broken port validation logic; added range check (1-65535) |
 | H-05 | High | Added schema validation with type checks and prototype pollution defense |

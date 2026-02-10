@@ -122,21 +122,11 @@ Custom block graffiti (default: "BuidlGuidl"):
   node index.js --validator --fee-recipient 0xYourEthAddress --graffiti "MyValidator"
   ```
 
-To require YubiKey touch as a second factor before the validator starts:
-  ```bash
-  node index.js --validator --fee-recipient 0xYourEthAddress --yubikey
-  ```
-
 **Security model:**
 
 Your validator private keys (BLS keys) are stored on disk inside **keystore JSON files** encrypted with your **keystore password** (standard [EIP-2335](https://eips.ethereum.org/EIPS/eip-2335) format using scrypt). The password is the sole cryptographic protection for the keys at rest -- without it, the keys cannot be decrypted. A minimum password length of 8 characters is enforced.
 
-On every startup, two things happen in sequence before the validator client launches:
-
-1. **Password prompt** -- you enter your keystore password. It is held **only in RAM** (tmpfs on Linux, RAM disk on macOS) for the duration of the session and never written to physical disk. The validator client reads this password from the RAM-backed file to decrypt your keystores. It is destroyed when the process exits.
-2. **YubiKey touch** (optional, `--yubikey` flag) -- you must physically tap your YubiKey. This proves you are physically present at the machine and prevents a remote attacker (e.g., someone with SSH access) from starting the validator, even if they know the password. The YubiKey OTP is a one-time code validated locally; it is **not** used for encryption.
-
-> **Note:** The YubiKey is a startup authorization gate, not an encryption mechanism. The password alone encrypts the keys on disk. You cannot use a blank password with only a YubiKey -- the keystore encryption requires a password. If you want the strongest protection, use both a strong password (encrypts keys at rest) and a YubiKey (prevents unauthorized startup).
+On every startup, you are prompted for your keystore password. It is held **only in RAM** (tmpfs on Linux, RAM disk on macOS) for the duration of the session and never written to physical disk. The validator client reads this password from the RAM-backed file to decrypt your keystores. It is destroyed when the process exits.
 
 **Important safety notes:**
 - **Slashing risk:** Never run the same validator keys on multiple machines simultaneously. This will result in slashing and loss of ETH.
@@ -189,8 +179,6 @@ Use the --help (-h) option to see all command line options:
        --validator-keys-dir <path>          Specify a directory containing existing validator keystore files to import
 
        --mev-boost                          Enable MEV-boost for additional execution layer rewards (optional)
-
-       --yubikey                            Require YubiKey touch (OTP) as 2FA before validator starts (optional)
 
       --update                              Update the execution and consensus clients to the latest version.
 

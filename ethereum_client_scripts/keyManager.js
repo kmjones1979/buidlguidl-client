@@ -575,39 +575,6 @@ export function importKeysForPrysm(installDir) {
 }
 
 /**
- * Verify physical YubiKey presence by reading a one-time password (OTP).
- *
- * YubiKeys in OTP mode (factory default, slot 1) act as USB keyboards.
- * When the user touches the gold contact the key emits a 44-character OTP
- * using modhex encoding (characters: cbdefghijklnrtuv).
- *
- * This function validates the OTP format to confirm physical possession
- * of a YubiKey. No network calls or external dependencies are needed.
- */
-export function verifyYubiKeyPresence() {
-  const MODHEX_CHARS = /^[cbdefghijklnrtuv]{32,64}$/;
-
-  console.log("\n🔑 YubiKey Verification");
-  console.log("─".repeat(50));
-  console.log("Touch your YubiKey now...\n");
-
-  const otp = readlineSync.question("", { hideEchoBack: false });
-
-  if (!MODHEX_CHARS.test(otp.trim())) {
-    console.log(
-      "\n❌ YubiKey verification failed. Input was not a valid YubiKey OTP."
-    );
-    console.log(
-      "   Make sure your YubiKey is configured in OTP mode (slot 1, factory default)."
-    );
-    process.exit(1);
-  }
-
-  console.log("✅ YubiKey verified (physical presence confirmed).\n");
-  return true;
-}
-
-/**
  * Main setup flow for validator keys.
  * Called from index.js when --validator is enabled.
  */
