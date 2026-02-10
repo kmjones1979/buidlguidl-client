@@ -129,15 +129,28 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
-# Reth, Geth, Lighthouse, and Prysm executables, logs, and databases
+# Reth, Geth, Lighthouse, Prysm executables, logs, and databases
 ethereum_clients/*
 !ethereum_clients/.gitkeep
+
+# Validator secrets (defense-in-depth, also covered by ethereum_clients/*)
+**/keystore-*.json
+**/password.txt
+**/deposit_data-*.json
+**/jwt.hex
+**/mnemonic*
+**/seed*
+**/slashing_protection*.json
 
 # Debug log
 debug.log
 
 # Command line options json (loaded for secondary dashboard views)
 options.json
+
+# Runtime lock and status files
+script.lock
+websocket_connection_status.json
 
 # Mac-specific finder file
 .DS_Store
